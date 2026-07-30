@@ -3,6 +3,8 @@ package micromessage
 import (
 	"strconv"
 	"strings"
+
+	"github.com/lucasb-eyer/go-colorful"
 )
 
 // Maps every accepted spelling to its corresponding decoration name.
@@ -149,25 +151,25 @@ func isKnownTagName(name string) bool {
 // Outputs a sequence of colors for gradient/rainbow tags.
 type colorAdvancer interface {
 	init(size int)
-	color() *Color
+	color() *colorful.Color
 	advance()
 }
 
 // This struct implements <gradient:...> color progression.
 type gradientAdvancer struct {
-	colors     []*Color
+	colors     []*colorful.Color
 	phase      float64
 	multiplier float64
 	index      int
 }
 
-func newGradientAdvancer(colors []*Color, phase float64) *gradientAdvancer {
+func newGradientAdvancer(colors []*colorful.Color, phase float64) *gradientAdvancer {
 	if len(colors) == 0 {
-		colors = []*Color{RGB(0xff, 0xff, 0xff), RGB(0, 0, 0)}
+		colors = []*colorful.Color{RGB(0xff, 0xff, 0xff), RGB(0, 0, 0)}
 	}
 	g := &gradientAdvancer{colors: colors}
 	if phase < 0 {
-		reversed := make([]*Color, len(colors))
+		reversed := make([]*colorful.Color, len(colors))
 		for i, c := range colors {
 			reversed[len(colors)-1-i] = c
 		}
@@ -191,7 +193,7 @@ func (g *gradientAdvancer) init(size int) {
 
 func (g *gradientAdvancer) advance() { g.index++ }
 
-func (g *gradientAdvancer) color() *Color {
+func (g *gradientAdvancer) color() *colorful.Color {
 	position := float64(g.index)*g.multiplier + g.phase
 	low := int(floor(position))
 	high := int(ceil(position)) % len(g.colors)
@@ -247,13 +249,13 @@ func (r *rainbowAdvancer) advance() {
 	}
 }
 
-func (r *rainbowAdvancer) color() *Color {
+func (r *rainbowAdvancer) color() *colorful.Color {
 	hue := (float64(r.colorIndex)/float64(r.size) + r.dividedPhase)
 	hue -= floor(hue)
 	return HSVColor(hue, 1, 1)
 }
 
-func parseGradientArgs(args []string) (colors []*Color, phase float64, err error) {
+func parseGradientArgs(args []string) (colors []*colorful.Color, phase float64, err error) {
 	if len(args) == 0 {
 		return nil, 0, nil
 	}

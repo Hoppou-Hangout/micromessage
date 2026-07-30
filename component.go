@@ -1,5 +1,7 @@
 package micromessage
 
+import "github.com/lucasb-eyer/go-colorful"
+
 // TriState represents a decoration's tristate value: unset, true, or false.
 type TriState int
 
@@ -50,7 +52,7 @@ type HoverEvent struct {
 }
 
 type Style struct {
-	Color       *Color
+	Color       *colorful.Color
 	Decorations map[string]TriState
 	ClickEvent  *ClickEvent
 	HoverEvent  *HoverEvent

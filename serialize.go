@@ -70,11 +70,11 @@ func serializeNode(c *Component, parent Style, sb *strings.Builder) {
 func diffStyleTags(parent, child Style) []string {
 	var tags []string
 
-	if child.Color != nil && !child.Color.Equal(parent.Color) {
+	if child.Color != nil && !(child.Color == parent.Color) {
 		if name := NamedColorName(child.Color); name != "" {
 			tags = append(tags, name)
 		} else {
-			tags = append(tags, child.Color.HexString())
+			tags = append(tags, child.Color.Hex())
 		}
 	}
 

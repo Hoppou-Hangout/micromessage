@@ -1,6 +1,10 @@
 package micromessage
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/lucasb-eyer/go-colorful"
+)
 
 func assertPlain(t *testing.T, input, expected string) {
 	t.Helper()
@@ -54,7 +58,7 @@ func TestColorAliases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if a.Children[0].Style.Color.HexString() != b.Children[0].Style.Color.HexString() {
+		if a.Children[0].Style.Color.Hex() != b.Children[0].Style.Color.Hex() {
 			t.Errorf("%q and %q resolved to different colors", pair[0], pair[1])
 		}
 	}
@@ -65,8 +69,8 @@ func TestHexColor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Children[0].Style.Color.HexString() != "#FF00FF" {
-		t.Errorf("got %s", c.Children[0].Style.Color.HexString())
+	if c.Children[0].Style.Color.Hex() != "#ff00ff" {
+		t.Errorf("got %s", c.Children[0].Style.Color.Hex())
 	}
 }
 
@@ -75,8 +79,8 @@ func TestHexColorShort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Children[0].Style.Color.HexString() != "#FF00FF" {
-		t.Errorf("got %s", c.Children[0].Style.Color.HexString())
+	if c.Children[0].Style.Color.Hex() != "#ff00ff" {
+		t.Errorf("got %s", c.Children[0].Style.Color.Hex())
 	}
 }
 
@@ -244,8 +248,8 @@ func TestGradient(t *testing.T) {
 	}
 	// first char should be pure red, last char pure blue
 	first := findFirstLeafColor(c)
-	if first == nil || first.HexString() != "#FF5555" {
-		t.Errorf("expected first color red (#FF5555), got %v", first)
+	if first == nil || first.Hex() != "#ff5555" {
+		t.Errorf("expected first color red (#ff5555), got %v", first)
 	}
 }
 
@@ -306,7 +310,7 @@ func TestSerializeDecoration(t *testing.T) {
 	}
 }
 
-func findFirstLeafColor(c *Component) *Color {
+func findFirstLeafColor(c *Component) *colorful.Color {
 	if c.Text != "" {
 		return c.Style.Color
 	}
