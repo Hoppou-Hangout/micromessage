@@ -6,7 +6,7 @@ text format.
 ## Install
 
 ```sh
-go get micromessage
+go get github.com/Hoppou-Hangout/micromessage
 ```
 
 ## Usage
