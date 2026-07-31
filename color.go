@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/lucasb-eyer/go-colorful"
+	mcolor "go.minekube.com/common/minecraft/color"
 )
 
 func RGB(r, g, b float64) *colorful.Color {
@@ -16,63 +17,23 @@ func FromHex(s string) *colorful.Color {
 	return &col
 }
 
-type namedColor struct {
-	name string
-	c    colorful.Color
-}
-
-func hex(hex string) colorful.Color {
-	col, _ := colorful.Hex(hex)
-	return col
-}
-
-var namedColors = []namedColor{
-	{"black", hex("#000000")},
-	{"dark_blue", hex("#0000AA")},
-	{"dark_green", hex("#00AA00")},
-	{"dark_aqua", hex("#00AAAA")},
-	{"dark_red", hex("#AA0000")},
-	{"dark_purple", hex("#AA00AA")},
-	{"gold", hex("#FFAA00")},
-	{"gray", hex("#AAAAAA")},
-	{"dark_gray", hex("#555555")},
-	{"blue", hex("#5555FF")},
-	{"green", hex("#55FF55")},
-	{"aqua", hex("#55FFFF")},
-	{"red", hex("#FF5555")},
-	{"light_purple", hex("#FF55FF")},
-	{"yellow", hex("#FFFF55")},
-	{"white", hex("#FFFFFF")},
-}
-
+// Aliases minekube's color.Names doesn't cover (British spellings).
 var namedColorAliases = map[string]string{
 	"grey":      "gray",
 	"dark_grey": "dark_gray",
 }
 
-var namedColorByName = func() map[string]colorful.Color {
-	m := make(map[string]colorful.Color, len(namedColors))
-	for _, nc := range namedColors {
-		m[nc.name] = nc.c
-	}
-	return m
-}()
-
-var namedColorByRGB = func() map[[3]float64]string {
-	m := make(map[[3]float64]string, len(namedColors))
-	for _, nc := range namedColors {
-		m[[3]float64{nc.c.R, nc.c.G, nc.c.B}] = nc.name
-	}
-	return m
-}()
-
+// ResolveColor resolves a named Minecraft color (delegating to minekube's
+// color.Names) or a #rrggbb / #rgb hex literal into a *colorful.Color.
+// colorful is kept as the public exchange type since minekube's color.RGB
+// is a colorful.Color underneath.
 func ResolveColor(name string) *colorful.Color {
 	name = strings.ToLower(name)
 	if canon, ok := namedColorAliases[name]; ok {
 		name = canon
 	}
-	if c, ok := namedColorByName[name]; ok {
-		cc := c
+	if n, ok := mcolor.Names[name]; ok {
+		cc := colorful.Color(*n.RGB)
 		return &cc
 	}
 	if strings.HasPrefix(name, "#") {
@@ -81,13 +42,18 @@ func ResolveColor(name string) *colorful.Color {
 	return nil
 }
 
-// Accepts a Color and outputs a named color if matching
+// NamedColorName returns the Minecraft name of c if it exactly matches one of
+// minekube's named colors, or "" otherwise. (We do not use NearestNamed because
+// that would report a nearest match for arbitrary colors.)
 func NamedColorName(c *colorful.Color) string {
 	if c == nil {
 		return ""
 	}
-	if name, ok := namedColorByRGB[[3]float64{c.R, c.G, c.B}]; ok {
-		return name
+	rgb := (*mcolor.RGB)(c)
+	for _, n := range mcolor.NamesOrder {
+		if *n.RGB == *rgb {
+			return n.Name
+		}
 	}
 	return ""
 }
