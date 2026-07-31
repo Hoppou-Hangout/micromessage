@@ -12,6 +12,11 @@ func RGB(r, g, b float64) *colorful.Color {
 	return &colorful.Color{R: r, G: g, B: b}
 }
 
+// mkRGB is minekube's color.RGB (= colorful.Color). Aliased here so the
+// internal builder can set component.Style.Color without importing the
+// color package in every call site.
+type mkRGB = mcolor.RGB
+
 func FromHex(s string) *colorful.Color {
 	col, _ := colorful.Hex(s)
 	return &col

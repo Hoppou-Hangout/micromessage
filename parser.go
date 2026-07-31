@@ -3,6 +3,8 @@ package micromessage
 import (
 	"fmt"
 	"strings"
+
+	"go.minekube.com/common/minecraft/component"
 )
 
 type Placeholder struct {
@@ -23,10 +25,10 @@ func StringPlaceholder(name, value string) Placeholder {
 	return Placeholder{Name: name, Component: Text(value)}
 }
 
-func findPlaceholder(placeholders []Placeholder, name string) (*Component, bool) {
+func findPlaceholder(placeholders []Placeholder, name string) (*component.Text, bool) {
 	for _, p := range placeholders {
 		if strings.EqualFold(p.Name, name) {
-			return p.Component, true
+			return componentToMinekube(p.Component), true
 		}
 	}
 	return nil, false
@@ -46,8 +48,12 @@ func deserialize(input string, strict bool, placeholders []Placeholder) (*Compon
 		return nil, err
 	}
 
-	deserializeSub := func(s string) (*Component, error) {
-		return deserialize(s, strict, placeholders)
+	deserializeSub := func(s string) (*component.Text, error) {
+		c, err := deserialize(s, strict, placeholders)
+		if err != nil {
+			return nil, err
+		}
+		return componentToMinekube(c), nil
 	}
 
 	comp, err := buildComponent(root, placeholders, deserializeSub, strict)
@@ -55,14 +61,14 @@ func deserialize(input string, strict bool, placeholders []Placeholder) (*Compon
 		return nil, err
 	}
 	if comp == nil {
-		comp = Empty()
+		comp = &component.Text{}
 	}
-	return comp, nil
+	return componentFromMinekube(comp), nil
 }
 
-func buildComponent(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*Component, error), strict bool) (*Component, error) {
+func buildComponent(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*component.Text, error), strict bool) (*component.Text, error) {
 	if n.isText {
-		return Text(n.text), nil
+		return &component.Text{Content: n.text}, nil
 	}
 
 	if n.tagName == "" {
@@ -72,25 +78,25 @@ func buildComponent(n *elementNode, placeholders []Placeholder, deserializeSub f
 
 	// Placeholder substitution
 	if repl, ok := findPlaceholder(placeholders, n.tagName); ok {
-		out := repl.Clone()
+		out := cloneText(repl)
 		if len(n.children) > 0 {
 			kids, err := buildChildren(n, placeholders, deserializeSub, strict)
 			if err != nil {
 				return nil, err
 			}
-			out.Children = append(out.Children, kids...)
+			out.Extra = append(out.Extra, kids...)
 		}
 		return out, nil
 	}
 
 	if isNewlineTag(n.tagName) {
-		out := Text("\n")
+		out := &component.Text{Content: "\n"}
 		if len(n.children) > 0 {
 			kids, err := buildChildren(n, placeholders, deserializeSub, strict)
 			if err != nil {
 				return nil, err
 			}
-			out.Children = append(out.Children, kids...)
+			out.Extra = append(out.Extra, kids...)
 		}
 		return out, nil
 	}
@@ -138,17 +144,17 @@ func buildComponent(n *elementNode, placeholders []Placeholder, deserializeSub f
 		return literalTagWithChildren(n, placeholders, deserializeSub, strict)
 	}
 
-	out := &Component{Style: style}
+	out := &component.Text{S: style}
 	kids, err := buildChildren(n, placeholders, deserializeSub, strict)
 	if err != nil {
 		return nil, err
 	}
-	out.Children = kids
+	out.Extra = kids
 	return out, nil
 }
 
-func buildChildren(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*Component, error), strict bool) ([]*Component, error) {
-	var out []*Component
+func buildChildren(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*component.Text, error), strict bool) ([]component.Component, error) {
+	var out []component.Component
 	for _, c := range n.children {
 		cc, err := buildComponent(c, placeholders, deserializeSub, strict)
 		if err != nil {
@@ -159,31 +165,29 @@ func buildChildren(n *elementNode, placeholders []Placeholder, deserializeSub fu
 	return out, nil
 }
 
-// Builds all children into a single container Component.
-func foldChildren(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*Component, error), strict bool) (*Component, error) {
+// Builds all children into a single container component.Text.
+func foldChildren(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*component.Text, error), strict bool) (*component.Text, error) {
 	kids, err := buildChildren(n, placeholders, deserializeSub, strict)
 	if err != nil {
 		return nil, err
 	}
-	out := Empty()
-	out.Children = kids
-	return out, nil
+	return &component.Text{Extra: kids}, nil
 }
 
 // Renders an unresolved self closing tag as literal text "<name:args>".
-func literalTag(n *elementNode) *Component {
-	return Text(renderTagLiteral(n))
+func literalTag(n *elementNode) *component.Text {
+	return &component.Text{Content: renderTagLiteral(n)}
 }
 
 // Renders an unresolved tag as literal opening text
-func literalTagWithChildren(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*Component, error), strict bool) (*Component, error) {
-	out := Empty()
-	out.Children = append(out.Children, Text(renderTagLiteral(n)))
+func literalTagWithChildren(n *elementNode, placeholders []Placeholder, deserializeSub func(string) (*component.Text, error), strict bool) (*component.Text, error) {
+	out := &component.Text{}
+	out.Extra = append(out.Extra, &component.Text{Content: renderTagLiteral(n)})
 	kids, err := buildChildren(n, placeholders, deserializeSub, strict)
 	if err != nil {
 		return nil, err
 	}
-	out.Children = append(out.Children, kids...)
+	out.Extra = append(out.Extra, kids...)
 	return out, nil
 }
 

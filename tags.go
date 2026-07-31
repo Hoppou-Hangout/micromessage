@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/lucasb-eyer/go-colorful"
+	"go.minekube.com/common/minecraft/component"
+	"go.minekube.com/common/minecraft/key"
 )
 
 // Maps every accepted spelling to its corresponding decoration name.
@@ -27,15 +29,18 @@ func canonicalDecoration(name string) (string, bool) {
 	return n, ok
 }
 
-func resolveTagStyle(name string, args []string, deserialize func(string) (*Component, error)) (Style, bool, error) {
-	style := NewStyle()
+// resolveTagStyle resolves a tag into a minekube component.Style.
+// It returns (style, ok, err): ok is false if the tag is not a recognized
+// style tag.
+func resolveTagStyle(name string, args []string, deserialize func(string) (*component.Text, error)) (component.Style, bool, error) {
+	style := component.Style{}
 
 	lower := strings.ToLower(name)
 
 	// Negated decoration shorthand: <!bold>
 	if strings.HasPrefix(name, "!") {
 		if dec, ok := canonicalDecoration(name[1:]); ok {
-			style.Decorations[dec] = False
+			style.SetDecoration(component.Decoration(dec), component.False)
 			return style, true, nil
 		}
 		return style, false, nil
@@ -43,16 +48,16 @@ func resolveTagStyle(name string, args []string, deserialize func(string) (*Comp
 
 	// Decoration tags (with optional explicit true/false argument)
 	if dec, ok := canonicalDecoration(lower); ok {
-		val := True
+		val := component.True
 		if len(args) > 0 {
 			switch strings.ToLower(args[0]) {
 			case "false":
-				val = False
+				val = component.False
 			case "true":
-				val = True
+				val = component.True
 			}
 		}
-		style.Decorations[dec] = val
+		style.SetDecoration(component.Decoration(dec), val)
 		return style, true, nil
 	}
 
@@ -64,12 +69,12 @@ func resolveTagStyle(name string, args []string, deserialize func(string) (*Comp
 		if col == nil {
 			return style, false, nil
 		}
-		style.Color = col
+		style.Color = (*mkRGB)(col)
 		return style, true, nil
 	}
 
 	if col := ResolveColor(name); col != nil {
-		style.Color = col
+		style.Color = (*mkRGB)(col)
 		return style, true, nil
 	}
 
@@ -78,7 +83,11 @@ func resolveTagStyle(name string, args []string, deserialize func(string) (*Comp
 		if len(args) < 2 {
 			return style, false, nil
 		}
-		style.ClickEvent = &ClickEvent{Action: ClickAction(strings.ToLower(args[0])), Value: args[1]}
+		action := component.ClickActions[strings.ToLower(args[0])]
+		if action == nil {
+			return style, false, nil
+		}
+		style.ClickEvent = component.NewClickEvent(action, args[1])
 		return style, true, nil
 
 	case "hover":
@@ -93,7 +102,7 @@ func resolveTagStyle(name string, args []string, deserialize func(string) (*Comp
 		if err != nil {
 			return style, false, err
 		}
-		style.HoverEvent = &HoverEvent{Action: ShowText, Value: comp}
+		style.HoverEvent = component.ShowText(comp)
 		return style, true, nil
 
 	case "insert", "insertion":
@@ -108,13 +117,13 @@ func resolveTagStyle(name string, args []string, deserialize func(string) (*Comp
 		if len(args) < 1 {
 			return style, false, nil
 		}
-		var f string
+		fontStr := args[0]
 		if len(args) >= 2 {
-			f = args[0] + ":" + args[1]
-		} else {
-			f = args[0]
+			fontStr = args[0] + ":" + args[1]
 		}
-		style.Font = &f
+		if k, err := key.Parse(fontStr); err == nil {
+			style.Font = k
+		}
 		return style, true, nil
 	}
 
@@ -297,48 +306,51 @@ func parseRainbowArgs(args []string) (reversed bool, phase int, err error) {
 func isGradientTag(name string) bool { return strings.EqualFold(name, "gradient") }
 func isRainbowTag(name string) bool  { return strings.EqualFold(name, "rainbow") }
 
-func totalTextLen(comp *Component) int {
-	n := codePointLen(comp.Text)
-	for _, c := range comp.Children {
-		n += totalTextLen(c)
+func totalTextLen(comp *component.Text) int {
+	n := codePointLen(comp.Content)
+	for _, c := range comp.Extra {
+		n += totalTextLen(asText(c))
 	}
 	return n
 }
 
-func applyColorChanging(comp *Component, adv colorAdvancer) *Component {
+func applyColorChanging(comp *component.Text, adv colorAdvancer) *component.Text {
 	adv.init(totalTextLen(comp))
 	return applyColorRec(comp, adv)
 }
 
-func applyColorRec(comp *Component, adv colorAdvancer) *Component {
-	if comp.Style.Color != nil {
+func applyColorRec(comp *component.Text, adv colorAdvancer) *component.Text {
+	if comp.S.Color != nil {
 		n := totalTextLen(comp)
 		for i := 0; i < n; i++ {
 			adv.advance()
 		}
-		return comp.Clone()
+		return cloneText(comp)
 	}
 
-	if comp.Text != "" {
-		runes := []rune(comp.Text)
-		out := &Component{Style: comp.Style.Clone()}
-		out.Style.Color = nil
+	if comp.Content != "" {
+		runes := []rune(comp.Content)
+		out := &component.Text{S: cloneStyle(comp.S)}
+		out.S.Color = nil
 		for _, r := range runes {
 			col := adv.color()
 			adv.advance()
-			chStyle := comp.Style.Clone()
-			chStyle.Color = col
-			out.Children = append(out.Children, &Component{Text: string(r), Style: chStyle})
+			chStyle := cloneStyle(comp.S)
+			chStyle.Color = (*mkRGB)(col)
+			out.Extra = append(out.Extra, &component.Text{
+				Content: string(r),
+				S:       chStyle,
+			})
 		}
-		for _, ch := range comp.Children {
-			out.Children = append(out.Children, applyColorRec(ch, adv))
+		for _, ch := range comp.Extra {
+			out.Extra = append(out.Extra, applyColorRec(asText(ch), adv))
 		}
 		return out
 	}
 
-	out := &Component{Style: comp.Style.Clone()}
-	for _, ch := range comp.Children {
-		out.Children = append(out.Children, applyColorRec(ch, adv))
+	out := &component.Text{S: cloneStyle(comp.S)}
+	for _, ch := range comp.Extra {
+		out.Extra = append(out.Extra, applyColorRec(asText(ch), adv))
 	}
 	return out
 }
