@@ -316,6 +316,18 @@ func componentFromMinekube(mc component.Component) *Component {
 	return c
 }
 
+// ToMinekube converts a public *Component tree to minekube's component.Component
+// interface, for interoperability with other go.minekube.com libraries (e.g. Gate).
+func ToMinekube(c *Component) component.Component {
+	return componentToMinekube(c)
+}
+
+// FromMinekube converts a minekube component.Component back to our public
+// *Component tree.
+func FromMinekube(mc component.Component) *Component {
+	return componentFromMinekube(mc)
+}
+
 // ---------------------------------------------------------------------------
 // minekube-side helpers used by the internal builder.
 // minekube has no Clone/Merge methods, so we provide them here.
