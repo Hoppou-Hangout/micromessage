@@ -60,6 +60,7 @@ var welcomeMsg = micromessage.MustDeserialize("<gradient:gold:yellow>Welcome!</g
 | `<click:ACTION:VALUE>`                      | `run_command`, `suggest_command`, `open_url`, `open_file`, `suggest_command`, `change_page`, `copy_to_clipboard`, `show_dialog`, `custom` |
 | `<hover:show_text:VALUE>`                   | See limitations below                                                                                                                     |
 | `<reset>`                                   | Clears all style for the remainder of the current scope; never closes                                                                     |
+| `<br>`, `<newline>`                         | Inserts a literal newline; never has children or a close tag                                                                     |
 
 ## Testing
 
