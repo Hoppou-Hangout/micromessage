@@ -57,6 +57,10 @@ type Node struct {
 // resetTag never takes children or a close tag: <reset> just resets state.
 const resetTag = "reset"
 
+// leafTags never take children or a close tag, same as resetTag: they stand
+// for a single character (a newline) rather than wrapping content.
+var leafTags = map[string]bool{"br": true, "newline": true}
+
 // --- Parser --------------------------------------------------------------
 
 type parser struct {
@@ -178,8 +182,8 @@ func (p *parser) parseElement() (*Node, error) {
 		return node, nil
 
 	case p.tt("Close"):
-		if node.Name == resetTag {
-			// <reset> never has content or a close tag.
+		if node.Name == resetTag || leafTags[strings.ToLower(node.Name)] {
+			// <reset>/<br>/<newline> never have content or a close tag.
 			node.SelfClosed = true
 			node.Closed = true
 			return node, nil
