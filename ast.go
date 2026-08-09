@@ -188,7 +188,8 @@ func (p *parser) parseElement() (*Node, error) {
 
 	case p.tt("Close"):
 		if node.Name == resetTag || leafTags[strings.ToLower(node.Name)] {
-			// <reset>/<br>/<newline> never have content or a close tag.
+			// <reset> and all leafTags (br/newline/lang/tr/translate/...) never
+			// have content or a close tag.
 			node.SelfClosed = true
 			node.Closed = true
 			return node, nil
