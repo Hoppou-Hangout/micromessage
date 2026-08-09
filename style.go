@@ -141,6 +141,8 @@ func render(nodes []*Node, inherited c.Style) []c.Component {
 			switch lower {
 			case "reset":
 				cur = c.Style{}
+			case "br", "newline":
+				out = append(out, &c.Text{Content: "\n", S: cur})
 			case "gradient":
 				out = append(out, renderGradient(n, cur)...)
 			default:
@@ -228,6 +230,9 @@ func flattenChars(nodes []*Node, inherited c.Style) ([]rune, []c.Style) {
 				switch lower {
 				case "reset":
 					local = c.Style{}
+				case "br", "newline":
+					runes = append(runes, '\n')
+					styles = append(styles, local)
 				case "gradient":
 					// Nested gradient: resolve it fully, then re-flatten its
 					// own output so it still participates correctly here.
