@@ -57,9 +57,14 @@ type Node struct {
 // resetTag never takes children or a close tag: <reset> just resets state.
 const resetTag = "reset"
 
-// leafTags never take children or a close tag, same as resetTag: they stand
-// for a single character (a newline) rather than wrapping content.
-var leafTags = map[string]bool{"br": true, "newline": true}
+// leafTags never take children or a close tag, same as resetTag: they insert
+// a single node (a newline, a translation component, ...) rather than
+// wrapping content.
+var leafTags = map[string]bool{
+	"br": true, "newline": true,
+	"lang": true, "tr": true, "translate": true,
+	"lang_or": true, "tr_or": true, "translate_or": true,
+}
 
 // --- Parser --------------------------------------------------------------
 

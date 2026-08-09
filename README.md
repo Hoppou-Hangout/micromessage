@@ -57,10 +57,23 @@ var welcomeMsg = micromessage.MustDeserialize("<gradient:gold:yellow>Welcome!</g
 | `<gradient>`                                | Defaults to white to black with no arguments                                                                                              |
 | `<gradient:c1:c2:...:cN>`                   | Any number of color stops                                                                                                                 |
 | `<gradient:c1:c2:phase>`                    | Trailing numeric argument shifts the gradient's starting point                                                                            |
+| `<rainbow>`, `<rainbow:phase>`, `<rainbow:!>`| Hue cycles across the wrapped text; `!` reverses direction, phase is in tenths                                                            |
+| `<transition:c1:c2:...:cN[:phase]>`         | Same args as `<gradient>`, but (matching real MiniMessage) resolves to a single static color, not a per-character blend                   |
+| `<shadow:NAME_OR_HEX:[alpha]>`, `<shadow:#RRGGBBAA>`, `<!shadow>` | Text shadow color; alpha (0-1) defaults to 0.25                                                                     |
+| `<insert:VALUE>`                            | Shift-click insertion text                                                                                                                |
+| `<font:KEY>`, `<font:NAMESPACE:KEY>`        | Sets the font resource key (default namespace `minecraft`)                                                                                |
 | `<click:ACTION:VALUE>`                      | `run_command`, `suggest_command`, `open_url`, `open_file`, `suggest_command`, `change_page`, `copy_to_clipboard`, `show_dialog`, `custom` |
-| `<hover:show_text:VALUE>`                   | See limitations below                                                                                                                     |
+| `<hover:show_text:VALUE>`                   | `VALUE` is itself parsed as MiniMessage, so it can carry its own colors/formatting                                                        |
+| `<hover:show_item:ID[:COUNT[:NBT]]>`        | `ID` needs quoting if namespaced, e.g. `"minecraft:diamond"`; bare `ID` defaults to the `minecraft` namespace                              |
+| `<hover:show_entity:TYPE:UUID[:NAME]>`      | Same `TYPE` quoting rule as `show_item`; `NAME` is parsed as MiniMessage                                                                   |
+| `<lang:KEY[:with...]>` (`tr`, `translate`)  | Translatable component; each `with` argument is itself parsed as MiniMessage                                                             |
+| `<lang_or:KEY:FALLBACK[:with...]>` (`tr_or`, `translate_or`) | Same as `<lang>`, with a client-side fallback string                                                                     |
 | `<reset>`                                   | Clears all style for the remainder of the current scope; never closes                                                                     |
-| `<br>`, `<newline>`                         | Inserts a literal newline; never has children or a close tag                                                                     |
+| `<br>`, `<newline>`                         | Inserts a literal newline; never has children or a close tag                                                                              |
+
+Not implemented: `<key>` (keybind), `<selector>`, `<score>`, `<nbt>`/`<data>` — the underlying
+`go.minekube.com/common` component model has no component types for these. `<pride>`, `<sprite>`,
+`<head>` are also unimplemented (client-rendered visuals, not representable as plain text/color).
 
 ## Testing
 
