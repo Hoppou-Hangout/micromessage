@@ -591,7 +591,31 @@ func sameStyle(a, b c.Style) bool {
 		a.Bold == b.Bold && a.Italic == b.Italic &&
 		a.Underlined == b.Underlined && a.Strikethrough == b.Strikethrough &&
 		a.Obfuscated == b.Obfuscated &&
-		a.ClickEvent == b.ClickEvent && a.HoverEvent == b.HoverEvent
+		a.ClickEvent == b.ClickEvent && a.HoverEvent == b.HoverEvent &&
+		shadowEq(a.ShadowColor, b.ShadowColor) &&
+		insertionEq(a.Insertion, b.Insertion) &&
+		fontEq(a.Font, b.Font)
+}
+
+func shadowEq(a, b *c.ShadowColor) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.ARGB == b.ARGB
+}
+
+func insertionEq(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func fontEq(a, b key.Key) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.String() == b.String()
 }
 
 func colorEq(a, b mccolor.Color) bool {
