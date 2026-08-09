@@ -7,6 +7,10 @@ import (
 
 	mccolor "go.minekube.com/common/minecraft/color"
 	c "go.minekube.com/common/minecraft/component"
+	"go.minekube.com/common/minecraft/key"
+	"go.minekube.com/common/minecraft/nbt"
+
+	"github.com/google/uuid"
 )
 
 // resolveColor turns a color name or "#rrggbb"/"#rgb" hex literal into a
@@ -77,7 +81,31 @@ func applyTag(style c.Style, node *Node) c.Style {
 		return style
 	}
 
+	if lower == "shadow" {
+		if negate {
+			// <!shadow> explicitly clears any inherited shadow color.
+			style.ShadowColor = &c.ShadowColor{}
+			return style
+		}
+		if sc, ok := parseShadowColor(node.Args); ok {
+			style.ShadowColor = sc
+		}
+		return style
+	}
+
 	switch lower {
+	case "insert":
+		if len(node.Args) > 0 {
+			v := strings.Join(node.Args, ":")
+			style.Insertion = &v
+		}
+		return style
+
+	case "font":
+		if k := parseKeyArgs(node.Args); k != nil {
+			style.Font = k
+		}
+		return style
 	case "color", "colour", "c":
 		if len(node.Args) > 0 {
 			if col, ok := resolveColor(node.Args[0]); ok {
@@ -99,18 +127,9 @@ func applyTag(style c.Style, node *Node) c.Style {
 		return style
 
 	case "hover":
-		if len(node.Args) >= 1 && strings.EqualFold(node.Args[0], "show_text") {
-			value := ""
-			if len(node.Args) > 1 {
-				value = strings.Join(node.Args[1:], ":")
-			}
-			// NOTE: real MiniMessage recursively parses this value as its own
-			// MiniMessage content (so hover text can carry its own
-			// colors/formatting). We only support a flat-text hover here; see
-			// the package doc for details.
-			style.HoverEvent = c.ShowText(&c.Text{Content: value})
+		if ev := buildHoverEvent(node.Args); ev != nil {
+			style.HoverEvent = ev
 		}
-		// show_item / show_entity are not implemented.
 		return style
 	}
 
@@ -119,6 +138,158 @@ func applyTag(style c.Style, node *Node) c.Style {
 		style.Color = col
 	}
 	return style
+}
+
+// parseKeyString turns "value" (default "minecraft" namespace) or a single
+// "namespace:value" argument (only reachable via a quoted arg, since bare
+// colons are otherwise split into separate tag arguments) into a key.Key.
+func parseKeyString(s string) key.Key {
+	if ns, v, ok := strings.Cut(s, ":"); ok {
+		return key.New(ns, v)
+	}
+	return key.New(key.MinecraftNamespace, s)
+}
+
+// parseKeyArgs handles <font:value> and <font:namespace:value>, the two
+// unquoted forms MiniMessage accepts for a key argument split across
+// separate tag args.
+func parseKeyArgs(args []string) key.Key {
+	switch len(args) {
+	case 1:
+		return parseKeyString(args[0])
+	case 2:
+		return key.New(args[0], args[1])
+	default:
+		return nil
+	}
+}
+
+// parseShadowColor implements <shadow:color[:alpha]>, accepting either an
+// explicit #RRGGBBAA literal or a named/hex color plus an optional alpha
+// float in [0,1] (defaulting to 0.25, matching Adventure's default).
+func parseShadowColor(args []string) (*c.ShadowColor, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	arg := args[0]
+	if strings.HasPrefix(arg, "#") && len(arg) == 9 {
+		v, err := strconv.ParseUint(arg[1:], 16, 32)
+		if err != nil {
+			return nil, false
+		}
+		r, g, b, a := byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
+		return &c.ShadowColor{ARGB: uint32(a)<<24 | uint32(r)<<16 | uint32(g)<<8 | uint32(b)}, true
+	}
+
+	col, ok := resolveColor(arg)
+	if !ok {
+		return nil, false
+	}
+	alpha := 0.25
+	if len(args) > 1 {
+		if f, err := strconv.ParseFloat(args[1], 64); err == nil {
+			alpha = f
+		}
+	}
+	rv := hexToRGB(col.Hex())
+	a := byte(math.Round(alpha * 255))
+	return &c.ShadowColor{ARGB: uint32(a)<<24 | uint32(rv.r)<<16 | uint32(rv.g)<<8 | uint32(rv.b)}, true
+}
+
+// buildHoverEvent implements <hover:show_text:VALUE>, <hover:show_item:ID[:COUNT[:NBT]]>
+// and <hover:show_entity:TYPE:UUID[:NAME]>. Namespaced IDs (item/entity type)
+// need quoting (e.g. "minecraft:diamond") since a bare colon is otherwise
+// consumed as a tag-argument separator; unquoted, the ID is assumed to be in
+// the "minecraft" namespace.
+func buildHoverEvent(args []string) c.HoverEvent {
+	if len(args) == 0 {
+		return nil
+	}
+	action, rest := strings.ToLower(args[0]), args[1:]
+
+	switch action {
+	case "show_text":
+		return c.ShowText(renderInline(strings.Join(rest, ":")))
+
+	case "show_item":
+		if len(rest) == 0 {
+			return nil
+		}
+		item := &c.ShowItemHoverType{Item: parseKeyString(rest[0]), Count: 1}
+		if len(rest) > 1 {
+			if n, err := strconv.Atoi(rest[1]); err == nil {
+				item.Count = n
+			}
+		}
+		if len(rest) > 2 {
+			item.NBT = nbt.NewBinaryTagHolder(strings.Join(rest[2:], ":"))
+		}
+		return c.ShowItem(item)
+
+	case "show_entity":
+		if len(rest) < 2 {
+			return nil
+		}
+		id, err := uuid.Parse(rest[1])
+		if err != nil {
+			return nil
+		}
+		entity := &c.ShowEntityHoverType{Type: parseKeyString(rest[0]), Id: id}
+		if len(rest) > 2 {
+			entity.Name = renderInline(strings.Join(rest[2:], ":"))
+		}
+		return c.ShowEntity(entity)
+
+	default:
+		return nil
+	}
+}
+
+// renderInline parses src as its own MiniMessage document, for values (hover
+// text, translation placeholders) that Adventure recursively deserializes.
+// Falls back to literal text if src doesn't parse.
+func renderInline(src string) *c.Text {
+	p, err := newParser(src)
+	if err != nil {
+		return &c.Text{Content: src}
+	}
+	nodes, err := p.Parse()
+	if err != nil {
+		return &c.Text{Content: src}
+	}
+	comps := render(nodes, c.Style{})
+	// Unwrap the common case of plain, unstyled text (no tags) into a single
+	// flat *c.Text, matching what real MiniMessage produces for such input
+	// instead of an empty-content root with one child.
+	if len(comps) == 1 {
+		if txt, ok := comps[0].(*c.Text); ok && len(txt.Extra) == 0 {
+			return txt
+		}
+	}
+	return &c.Text{Extra: comps}
+}
+
+// buildTranslation implements <lang:key:with...>/<tr>/<translate> and their
+// <..._or:key:fallback:with...> fallback-carrying variants.
+func buildTranslation(node *Node, cur c.Style) *c.Translation {
+	if len(node.Args) == 0 {
+		return nil
+	}
+	tKey, rest := node.Args[0], node.Args[1:]
+
+	var fallback string
+	if strings.HasSuffix(strings.ToLower(node.Name), "_or") {
+		if len(rest) == 0 {
+			return nil
+		}
+		fallback, rest = rest[0], rest[1:]
+	}
+
+	var with []c.Component
+	for _, a := range rest {
+		with = append(with, renderInline(a))
+	}
+	return &c.Translation{Key: tKey, S: cur, With: with, Fallback: fallback}
 }
 
 // --- Rendering ----------------------------------------------------------
@@ -143,8 +314,16 @@ func render(nodes []*Node, inherited c.Style) []c.Component {
 				cur = c.Style{}
 			case "br", "newline":
 				out = append(out, &c.Text{Content: "\n", S: cur})
+			case "lang", "tr", "translate", "lang_or", "tr_or", "translate_or":
+				if tr := buildTranslation(n, cur); tr != nil {
+					out = append(out, tr)
+				}
 			case "gradient":
 				out = append(out, renderGradient(n, cur)...)
+			case "rainbow":
+				out = append(out, renderRainbow(n, cur)...)
+			case "transition":
+				out = append(out, renderTransition(n, cur)...)
 			default:
 				childStyle := applyTag(cur, n)
 				out = append(out, render(n.Children, childStyle)...)
@@ -208,6 +387,149 @@ func renderGradient(node *Node, inherited c.Style) []c.Component {
 	return out
 }
 
+// renderRainbow implements <rainbow:[!][phase]>, a faithful port of
+// Adventure's RainbowTag: hue cycles once across the flattened character
+// span, "!" reverses direction, and phase (tenths, e.g. "5" -> 0.5) shifts
+// the starting hue.
+func renderRainbow(node *Node, inherited c.Style) []c.Component {
+	reversed, phase := parseRainbowArgs(node.Args)
+
+	base := inherited
+	base.Color = nil
+	runes, styles := flattenChars(node.Children, base)
+	n := len(runes)
+
+	var out []c.Component
+	var curText strings.Builder
+	var curStyle *c.Style
+
+	flush := func() {
+		if curStyle != nil && curText.Len() > 0 {
+			out = append(out, &c.Text{Content: curText.String(), S: *curStyle})
+		}
+		curText.Reset()
+		curStyle = nil
+	}
+
+	for i, r := range runes {
+		idx := i
+		if reversed {
+			idx = n - 1 - i
+		}
+		hue := math.Mod(float64(idx)/float64(n)+phase, 1)
+		if hue < 0 {
+			hue += 1
+		}
+
+		s := styles[i]
+		if s.Color == nil {
+			s.Color = rgbToColor(hsvToRGB(hue, 1, 1))
+		}
+		if curStyle == nil || !sameStyle(*curStyle, s) {
+			flush()
+			cp := s
+			curStyle = &cp
+		}
+		curText.WriteRune(r)
+	}
+	flush()
+	return out
+}
+
+// parseRainbowArgs parses the single optional <rainbow> argument: an
+// optional leading "!" (reverse) followed by an optional integer phase in
+// tenths (matching Adventure, where "<rainbow:5>" means phase 0.5).
+func parseRainbowArgs(args []string) (reversed bool, phase float64) {
+	if len(args) == 0 {
+		return false, 0
+	}
+	v := args[0]
+	if strings.HasPrefix(v, "!") {
+		reversed = true
+		v = v[1:]
+	}
+	if v == "" {
+		return reversed, 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		phase = float64(n) / 10
+	}
+	return reversed, phase
+}
+
+// hsvToRGB converts an HSV color (h, s, v all in [0,1]) to RGB bytes.
+func hsvToRGB(h, s, v float64) rgb {
+	i := int(h * 6)
+	f := h*6 - float64(i)
+	p := v * (1 - s)
+	q := v * (1 - f*s)
+	t := v * (1 - (1-f)*s)
+
+	var r, g, b float64
+	switch i % 6 {
+	case 0:
+		r, g, b = v, t, p
+	case 1:
+		r, g, b = q, v, p
+	case 2:
+		r, g, b = p, v, t
+	case 3:
+		r, g, b = p, q, v
+	case 4:
+		r, g, b = t, p, v
+	case 5:
+		r, g, b = v, p, q
+	}
+	return rgb{
+		byte(math.Round(r * 255)),
+		byte(math.Round(g * 255)),
+		byte(math.Round(b * 255)),
+	}
+}
+
+// renderTransition implements <transition:c1:c2:...:cN[:phase]>. Unlike
+// <gradient>, real MiniMessage's TransitionTag computes a *single* color
+// from the phase (it's meant to be animated by re-resolving the tag over
+// time via a placeholder), not a per-character interpolation - so here it's
+// equivalent to a plain color wrap using that computed color. A faithful
+// port of TransitionTag.color().
+func renderTransition(node *Node, inherited c.Style) []c.Component {
+	colors, phase := parseGradientArgs(node.Args)
+	if len(colors) < 2 {
+		colors = []rgb{hexRGB(0xffffff), hexRGB(0x000000)}
+	}
+
+	style := inherited
+	style.Color = rgbToColor(transitionColor(colors, phase))
+	return render(node.Children, style)
+}
+
+// transitionColor is a direct port of TransitionTag.color(): colors is
+// mutated in place (reversed) when phase is negative, matching the Java
+// implementation's constructor-time reversal.
+func transitionColor(colors []rgb, phase float64) rgb {
+	negative := phase < 0
+	if negative {
+		phase = 1 + phase
+		for i, j := 0, len(colors)-1; i < j; i, j = i+1, j-1 {
+			colors[i], colors[j] = colors[j], colors[i]
+		}
+	}
+
+	steps := 1 / float64(len(colors)-1)
+	for i := 1; i < len(colors); i++ {
+		val := float64(i) * steps
+		if val >= phase {
+			factor := 1 + (phase-val)*float64(len(colors)-1)
+			if negative {
+				return lerpRGB(colors[i], colors[i-1], 1-factor)
+			}
+			return lerpRGB(colors[i-1], colors[i], factor)
+		}
+	}
+	return colors[0]
+}
+
 // flattenChars walks nodes, resolving nested tags normally (including "reset"
 // and nested "gradient"), and returns every rune of the eventual text alongside
 // the style that applies to it, in order.
@@ -233,10 +555,20 @@ func flattenChars(nodes []*Node, inherited c.Style) ([]rune, []c.Style) {
 				case "br", "newline":
 					runes = append(runes, '\n')
 					styles = append(styles, local)
-				case "gradient":
-					// Nested gradient: resolve it fully, then re-flatten its
-					// own output so it still participates correctly here.
-					for _, comp := range renderGradient(n, local) {
+				case "gradient", "rainbow", "transition":
+					// Nested gradient/rainbow/transition: resolve it fully,
+					// then re-flatten its own output so it still
+					// participates correctly here.
+					var comps []c.Component
+					switch lower {
+					case "gradient":
+						comps = renderGradient(n, local)
+					case "rainbow":
+						comps = renderRainbow(n, local)
+					case "transition":
+						comps = renderTransition(n, local)
+					}
+					for _, comp := range comps {
 						if txt, ok := comp.(*c.Text); ok {
 							for _, r := range txt.Content {
 								runes = append(runes, r)
