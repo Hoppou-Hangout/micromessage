@@ -1,6 +1,6 @@
 module github.com/Hoppou-Hangout/micromessage
 
-go 1.22.2
+go 1.26
 
 require (
 	github.com/alecthomas/participle/v2 v2.1.4
