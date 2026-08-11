@@ -149,11 +149,10 @@ func TestHover_Basic(t *testing.T) {
 // --- Ported from MiniMessageParserTest.java (general behavior) --------
 
 func TestGeneral_MismatchedTags(t *testing.T) {
-	// testMismatchedTags: a close tag that doesn't match just... doesn't close
-	// anything; it's literally consumed as the ancestor boundary check, found
-	// no match anywhere, so at top level it's dropped, and "green" (never
+	// testMismatchedTags: a close tag that doesn't match anything currently
+	// open doesn't close anything -- it's literal text, and "green" (never
 	// explicitly closed) auto-closes at EOF instead.
-	check(t, "mismatched", `<green>hello</red>`, text("hello", "#55ff55"))
+	check(t, "mismatched", `<green>hello</red>`, text("hello</red>", "#55ff55"))
 }
 
 func TestGeneral_CaseInsensitiveTagNames(t *testing.T) {

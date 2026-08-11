@@ -55,91 +55,6 @@ func clickAction(name string) (c.ClickAction, bool) {
 	return a, ok
 }
 
-// applyTag returns the style that should apply to this tag's own content, given
-// the style inherited from its parent. "gradient" and "reset" are handled
-// structurally by the caller, not here.
-func applyTag(style c.Style, node *Node) c.Style {
-	name := node.Name
-	negate := false
-	if strings.HasPrefix(name, "!") {
-		negate = true
-		name = name[1:]
-	}
-	lower := strings.ToLower(name)
-
-	if dec, ok := decorationTags[lower]; ok {
-		value := !negate
-		if len(node.Args) == 1 {
-			switch strings.ToLower(node.Args[0]) {
-			case "true":
-				value = true
-			case "false":
-				value = false
-			}
-		}
-		style.SetDecoration(dec, c.StateByBool(value))
-		return style
-	}
-
-	if lower == "shadow" {
-		if negate {
-			// <!shadow> explicitly clears any inherited shadow color.
-			style.ShadowColor = &c.ShadowColor{}
-			return style
-		}
-		if sc, ok := parseShadowColor(node.Args); ok {
-			style.ShadowColor = sc
-		}
-		return style
-	}
-
-	switch lower {
-	case "insert":
-		if len(node.Args) > 0 {
-			v := strings.Join(node.Args, ":")
-			style.Insertion = &v
-		}
-		return style
-
-	case "font":
-		if k := parseKeyArgs(node.Args); k != nil {
-			style.Font = k
-		}
-		return style
-	case "color", "colour", "c":
-		if len(node.Args) > 0 {
-			if col, ok := resolveColor(node.Args[0]); ok {
-				style.Color = col
-			}
-		}
-		return style
-
-	case "click":
-		if len(node.Args) >= 1 {
-			if action, ok := clickAction(node.Args[0]); ok {
-				value := ""
-				if len(node.Args) > 1 {
-					value = strings.Join(node.Args[1:], ":")
-				}
-				style.ClickEvent = c.NewClickEvent(action, value)
-			}
-		}
-		return style
-
-	case "hover":
-		if ev := buildHoverEvent(node.Args); ev != nil {
-			style.HoverEvent = ev
-		}
-		return style
-	}
-
-	// Bare color tags, e.g. <red> or <#ff0000>.
-	if col, ok := resolveColor(name); ok {
-		style.Color = col
-	}
-	return style
-}
-
 // parseKeyString turns "value" (default "minecraft" namespace) or a single
 // "namespace:value" argument (only reachable via a quoted arg, since bare
 // colons are otherwise split into separate tag arguments) into a key.Key.
@@ -201,7 +116,7 @@ func parseShadowColor(args []string) (*c.ShadowColor, bool) {
 // need quoting (e.g. "minecraft:diamond") since a bare colon is otherwise
 // consumed as a tag-argument separator; unquoted, the ID is assumed to be in
 // the "minecraft" namespace.
-func buildHoverEvent(args []string) c.HoverEvent {
+func buildHoverEvent(args []string, resolvers []TagResolver, depth int) c.HoverEvent {
 	if len(args) == 0 {
 		return nil
 	}
@@ -209,7 +124,7 @@ func buildHoverEvent(args []string) c.HoverEvent {
 
 	switch action {
 	case "show_text":
-		return c.ShowText(renderInline(strings.Join(rest, ":")))
+		return c.ShowText(renderInline(strings.Join(rest, ":"), resolvers, depth))
 
 	case "show_item":
 		if len(rest) == 0 {
@@ -236,7 +151,7 @@ func buildHoverEvent(args []string) c.HoverEvent {
 		}
 		entity := &c.ShowEntityHoverType{Type: parseKeyString(rest[0]), Id: id}
 		if len(rest) > 2 {
-			entity.Name = renderInline(strings.Join(rest[2:], ":"))
+			entity.Name = renderInline(strings.Join(rest[2:], ":"), resolvers, depth)
 		}
 		return c.ShowEntity(entity)
 
@@ -248,16 +163,12 @@ func buildHoverEvent(args []string) c.HoverEvent {
 // renderInline parses src as its own MiniMessage document, for values (hover
 // text, translation placeholders) that Adventure recursively deserializes.
 // Falls back to literal text if src doesn't parse.
-func renderInline(src string) *c.Text {
-	p, err := newParser(src)
+func renderInline(src string, resolvers []TagResolver, depth int) *c.Text {
+	nodes, err := parse(src, resolvers, false)
 	if err != nil {
 		return &c.Text{Content: src}
 	}
-	nodes, err := p.Parse()
-	if err != nil {
-		return &c.Text{Content: src}
-	}
-	comps := render(nodes, c.Style{})
+	comps := render(nodes, c.Style{}, resolvers, depth)
 	// Unwrap the common case of plain, unstyled text (no tags) into a single
 	// flat *c.Text, matching what real MiniMessage produces for such input
 	// instead of an empty-content root with one child.
@@ -271,7 +182,7 @@ func renderInline(src string) *c.Text {
 
 // buildTranslation implements <lang:key:with...>/<tr>/<translate> and their
 // <..._or:key:fallback:with...> fallback-carrying variants.
-func buildTranslation(node *Node, cur c.Style) *c.Translation {
+func buildTranslation(node *Node, cur c.Style, resolvers []TagResolver, depth int) *c.Translation {
 	if len(node.Args) == 0 {
 		return nil
 	}
@@ -287,7 +198,7 @@ func buildTranslation(node *Node, cur c.Style) *c.Translation {
 
 	var with []c.Component
 	for _, a := range rest {
-		with = append(with, renderInline(a))
+		with = append(with, renderInline(a, resolvers, depth))
 	}
 	return &c.Translation{Key: tKey, S: cur, With: with, Fallback: fallback}
 }
@@ -298,7 +209,7 @@ func buildTranslation(node *Node, cur c.Style) *c.Translation {
 // "current style" so <reset> (always self-closed, never wraps anything) can
 // change the ambient style for the *remaining* siblings without touching ones
 // already emitted.
-func render(nodes []*Node, inherited c.Style) []c.Component {
+func render(nodes []*Node, inherited c.Style, resolvers []TagResolver, depth int) []c.Component {
 	var out []c.Component
 	cur := inherited
 
@@ -308,27 +219,80 @@ func render(nodes []*Node, inherited c.Style) []c.Component {
 			out = append(out, &c.Text{Content: n.Text, S: cur})
 
 		case KindElement:
-			lower := strings.ToLower(n.Name)
-			switch lower {
-			case "reset":
+			tag := n.Tag
+			switch tag.kind {
+			case tagDirective:
 				cur = c.Style{}
-			case "br", "newline":
-				out = append(out, &c.Text{Content: "\n", S: cur})
-			case "lang", "tr", "translate", "lang_or", "tr_or", "translate_or":
-				if tr := buildTranslation(n, cur); tr != nil {
+			case tagStyling:
+				childStyle := applyStyles(cur, tag.styles)
+				out = append(out, render(n.Children, childStyle, resolvers, depth)...)
+			case tagModifying:
+				out = append(out, renderModifying(tag.modifying, n, cur, resolvers, depth)...)
+			case tagHover:
+				childStyle := cur
+				if ev := buildHoverEvent(tag.hoverArgs, resolvers, depth); ev != nil {
+					childStyle.HoverEvent = ev
+				}
+				out = append(out, render(n.Children, childStyle, resolvers, depth)...)
+			case tagTranslatable:
+				if tr := buildTranslation(n, cur, resolvers, depth); tr != nil {
 					out = append(out, tr)
 				}
-			case "gradient":
-				out = append(out, renderGradient(n, cur)...)
-			case "rainbow":
-				out = append(out, renderRainbow(n, cur)...)
-			case "transition":
-				out = append(out, renderTransition(n, cur)...)
-			default:
-				childStyle := applyTag(cur, n)
-				out = append(out, render(n.Children, childStyle)...)
+			case tagGradient:
+				out = append(out, renderGradient(n, cur, resolvers, depth)...)
+			case tagRainbow:
+				out = append(out, renderRainbow(n, cur, resolvers, depth)...)
+			case tagTransition:
+				out = append(out, renderTransition(n, cur, resolvers, depth)...)
+			default: // tagText, tagParsed, tagComponent
+				out = append(out, resolveTagOutput(tag, cur, resolvers, depth)...)
 			}
 		}
+	}
+	return out
+}
+
+// resolveTagOutput turns a resolved text/parsed/component Tag into the
+// components it substitutes at its position in the tree, given the ambient
+// style.
+func resolveTagOutput(tag Tag, cur c.Style, resolvers []TagResolver, depth int) []c.Component {
+	switch tag.kind {
+	case tagComponent:
+		return []c.Component{tag.comp}
+	case tagParsed:
+		if depth >= maxTagDepth {
+			return []c.Component{&c.Text{Content: tag.value, S: cur}}
+		}
+		nodes, err := parse(tag.value, resolvers, false)
+		if err != nil {
+			return []c.Component{&c.Text{Content: tag.value, S: cur}}
+		}
+		return render(nodes, cur, resolvers, depth+1)
+	default: // tagText
+		return []c.Component{&c.Text{Content: tag.value, S: cur}}
+	}
+}
+
+// renderModifying implements the Modifying tag protocol: m visits every node
+// in the tag's subtree depth-first, then the subtree is rendered normally,
+// and finally m.Apply transforms each produced top-level component in order.
+func renderModifying(m ModifyingTag, node *Node, cur c.Style, resolvers []TagResolver, depth int) []c.Component {
+	var visit func(nodes []*Node)
+	visit = func(nodes []*Node) {
+		for _, n := range nodes {
+			m.Visit(n)
+			if n.Kind == KindElement {
+				visit(n.Children)
+			}
+		}
+	}
+	visit(node.Children)
+	m.PostVisit()
+
+	comps := render(node.Children, cur, resolvers, depth)
+	out := make([]c.Component, len(comps))
+	for i, comp := range comps {
+		out[i] = m.Apply(comp, 0)
 	}
 	return out
 }
@@ -343,7 +307,7 @@ func render(nodes []*Node, inherited c.Style) []c.Component {
 // that for negative values reverses the color list and remaps into [0,1) before
 // scaling into index space. No colors given defaults to white -> black,
 // matching the real tag.
-func renderGradient(node *Node, inherited c.Style) []c.Component {
+func renderGradient(node *Node, inherited c.Style, resolvers []TagResolver, depth int) []c.Component {
 	colors, phase := parseGradientArgs(node.Args)
 	if len(colors) < 2 {
 		colors = []rgb{hexRGB(0xffffff), hexRGB(0x000000)}
@@ -355,9 +319,9 @@ func renderGradient(node *Node, inherited c.Style) []c.Component {
 	// this gradient should block the gradient from applying.
 	base := inherited
 	base.Color = nil
-	runes, styles := flattenChars(node.Children, base)
+	atoms := flattenChars(node.Children, base, resolvers, depth)
 
-	calc := newGradientCalc(colors, phase, len(runes))
+	calc := newGradientCalc(colors, phase, len(atoms))
 
 	var out []c.Component
 	var curText strings.Builder
@@ -371,8 +335,17 @@ func renderGradient(node *Node, inherited c.Style) []c.Component {
 		curStyle = nil
 	}
 
-	for i, r := range runes {
-		s := styles[i]
+	for i, a := range atoms {
+		if a.comp != nil {
+			flush()
+			s := a.comp.Style()
+			if s.Color == nil {
+				s.Color = rgbToColor(calc.at(i))
+			}
+			out = append(out, a.comp)
+			continue
+		}
+		s := a.style
 		if s.Color == nil {
 			s.Color = rgbToColor(calc.at(i))
 		}
@@ -381,7 +354,7 @@ func renderGradient(node *Node, inherited c.Style) []c.Component {
 			cp := s
 			curStyle = &cp
 		}
-		curText.WriteRune(r)
+		curText.WriteRune(a.r)
 	}
 	flush()
 	return out
@@ -391,13 +364,13 @@ func renderGradient(node *Node, inherited c.Style) []c.Component {
 // Adventure's RainbowTag: hue cycles once across the flattened character
 // span, "!" reverses direction, and phase (tenths, e.g. "5" -> 0.5) shifts
 // the starting hue.
-func renderRainbow(node *Node, inherited c.Style) []c.Component {
+func renderRainbow(node *Node, inherited c.Style, resolvers []TagResolver, depth int) []c.Component {
 	reversed, phase := parseRainbowArgs(node.Args)
 
 	base := inherited
 	base.Color = nil
-	runes, styles := flattenChars(node.Children, base)
-	n := len(runes)
+	atoms := flattenChars(node.Children, base, resolvers, depth)
+	n := len(atoms)
 
 	var out []c.Component
 	var curText strings.Builder
@@ -411,26 +384,48 @@ func renderRainbow(node *Node, inherited c.Style) []c.Component {
 		curStyle = nil
 	}
 
-	for i, r := range runes {
+	hueAt := func(i int) float32 {
 		idx := i
 		if reversed {
 			idx = n - 1 - i
 		}
-		hue := math.Mod(float64(idx)/float64(n)+phase, 1)
+		// A direct port of RainbowTag.color(): "index / size" happens in
+		// float32 first (Java: "float index / int size"), is then promoted
+		// to float64 to add the float64 phase (Java's "double dividedPhase"
+		// field), and only the mod-1 result is narrowed back to float32 for
+		// the HSV conversion. Doing the division in float64 throughout, or
+		// narrowing phase to float32 before the mod, both disagree with the
+		// real output once phase is large (adventure's own gh1040
+		// regression test) or lands near a tenth-hue boundary.
+		idxOverN := float32(idx) / float32(n)
+		hue64 := math.Mod(float64(idxOverN)+phase, 1)
+		hue := float32(hue64)
 		if hue < 0 {
 			hue += 1
 		}
+		return hue
+	}
 
-		s := styles[i]
+	for i, a := range atoms {
+		if a.comp != nil {
+			flush()
+			s := a.comp.Style()
+			if s.Color == nil {
+				s.Color = rgbToColor(hsvToRGB(hueAt(i), 1, 1))
+			}
+			out = append(out, a.comp)
+			continue
+		}
+		s := a.style
 		if s.Color == nil {
-			s.Color = rgbToColor(hsvToRGB(hue, 1, 1))
+			s.Color = rgbToColor(hsvToRGB(hueAt(i), 1, 1))
 		}
 		if curStyle == nil || !sameStyle(*curStyle, s) {
 			flush()
 			cp := s
 			curStyle = &cp
 		}
-		curText.WriteRune(r)
+		curText.WriteRune(a.r)
 	}
 	flush()
 	return out
@@ -452,20 +447,25 @@ func parseRainbowArgs(args []string) (reversed bool, phase float64) {
 		return reversed, 0
 	}
 	if n, err := strconv.Atoi(v); err == nil {
+		// A double, matching Java's RainbowTag#dividedPhase field exactly
+		// (phase/10d) -- see renderRainbow for why this matters.
 		phase = float64(n) / 10
 	}
 	return reversed, phase
 }
 
-// hsvToRGB converts an HSV color (h, s, v all in [0,1]) to RGB bytes.
-func hsvToRGB(h, s, v float64) rgb {
+// hsvToRGB converts an HSV color (h, s, v all in [0,1]) to RGB bytes, in
+// float32 arithmetic throughout to match Java's float (not double) precision
+// in Adventure's HSVLike/TextColor.color(float,float,float) bit-for-bit --
+// float64 disagrees with the real output by +-1/255 at some hues.
+func hsvToRGB(h, s, v float32) rgb {
 	i := int(h * 6)
-	f := h*6 - float64(i)
+	f := h*6 - float32(i)
 	p := v * (1 - s)
 	q := v * (1 - f*s)
 	t := v * (1 - (1-f)*s)
 
-	var r, g, b float64
+	var r, g, b float32
 	switch i % 6 {
 	case 0:
 		r, g, b = v, t, p
@@ -480,10 +480,12 @@ func hsvToRGB(h, s, v float64) rgb {
 	case 5:
 		r, g, b = v, p, q
 	}
+	// Truncates rather than rounds, matching Adventure's
+	// TextColor.color(float,float,float) exactly.
 	return rgb{
-		byte(math.Round(r * 255)),
-		byte(math.Round(g * 255)),
-		byte(math.Round(b * 255)),
+		byte(r * 255),
+		byte(g * 255),
+		byte(b * 255),
 	}
 }
 
@@ -493,7 +495,7 @@ func hsvToRGB(h, s, v float64) rgb {
 // time via a placeholder), not a per-character interpolation - so here it's
 // equivalent to a plain color wrap using that computed color. A faithful
 // port of TransitionTag.color().
-func renderTransition(node *Node, inherited c.Style) []c.Component {
+func renderTransition(node *Node, inherited c.Style, resolvers []TagResolver, depth int) []c.Component {
 	colors, phase := parseGradientArgs(node.Args)
 	if len(colors) < 2 {
 		colors = []rgb{hexRGB(0xffffff), hexRGB(0x000000)}
@@ -501,7 +503,7 @@ func renderTransition(node *Node, inherited c.Style) []c.Component {
 
 	style := inherited
 	style.Color = rgbToColor(transitionColor(colors, phase))
-	return render(node.Children, style)
+	return render(node.Children, style, resolvers, depth)
 }
 
 // transitionColor is a direct port of TransitionTag.color(): colors is
@@ -533,9 +535,24 @@ func transitionColor(colors []rgb, phase float64) rgb {
 // flattenChars walks nodes, resolving nested tags normally (including "reset"
 // and nested "gradient"), and returns every rune of the eventual text alongside
 // the style that applies to it, in order.
-func flattenChars(nodes []*Node, inherited c.Style) ([]rune, []c.Style) {
-	var runes []rune
-	var styles []c.Style
+func flattenChars(nodes []*Node, inherited c.Style, resolvers []TagResolver, depth int) []textAtom {
+	var atoms []textAtom
+
+	appendComps := func(comps []c.Component) {
+		for _, comp := range comps {
+			if txt, ok := comp.(*c.Text); ok {
+				for _, r := range txt.Content {
+					atoms = append(atoms, textAtom{r: r, style: txt.S})
+				}
+				continue
+			}
+			// A component that can't be decomposed into characters (e.g. a
+			// <lang> tag's *c.Translation) still counts as exactly one
+			// position in the gradient/rainbow's span, and gets colored as
+			// a whole, matching Adventure's real Modifying-tag behavior.
+			atoms = append(atoms, textAtom{comp: comp})
+		}
+	}
 
 	var walk func(nodes []*Node, style c.Style)
 	walk = func(nodes []*Node, style c.Style) {
@@ -544,46 +561,50 @@ func flattenChars(nodes []*Node, inherited c.Style) ([]rune, []c.Style) {
 			switch n.Kind {
 			case KindText:
 				for _, r := range n.Text {
-					runes = append(runes, r)
-					styles = append(styles, local)
+					atoms = append(atoms, textAtom{r: r, style: local})
 				}
 			case KindElement:
-				lower := strings.ToLower(n.Name)
-				switch lower {
-				case "reset":
+				tag := n.Tag
+				switch tag.kind {
+				case tagDirective:
 					local = c.Style{}
-				case "br", "newline":
-					runes = append(runes, '\n')
-					styles = append(styles, local)
-				case "gradient", "rainbow", "transition":
-					// Nested gradient/rainbow/transition: resolve it fully,
-					// then re-flatten its own output so it still
-					// participates correctly here.
-					var comps []c.Component
-					switch lower {
-					case "gradient":
-						comps = renderGradient(n, local)
-					case "rainbow":
-						comps = renderRainbow(n, local)
-					case "transition":
-						comps = renderTransition(n, local)
+				case tagStyling:
+					walk(n.Children, applyStyles(local, tag.styles))
+				case tagModifying:
+					appendComps(renderModifying(tag.modifying, n, local, resolvers, depth))
+				case tagHover:
+					childStyle := local
+					if ev := buildHoverEvent(tag.hoverArgs, resolvers, depth); ev != nil {
+						childStyle.HoverEvent = ev
 					}
-					for _, comp := range comps {
-						if txt, ok := comp.(*c.Text); ok {
-							for _, r := range txt.Content {
-								runes = append(runes, r)
-								styles = append(styles, txt.S)
-							}
-						}
+					walk(n.Children, childStyle)
+				case tagTranslatable:
+					if tr := buildTranslation(n, local, resolvers, depth); tr != nil {
+						appendComps([]c.Component{tr})
 					}
-				default:
-					walk(n.Children, applyTag(local, n))
+				case tagGradient:
+					appendComps(renderGradient(n, local, resolvers, depth))
+				case tagRainbow:
+					appendComps(renderRainbow(n, local, resolvers, depth))
+				case tagTransition:
+					appendComps(renderTransition(n, local, resolvers, depth))
+				default: // tagText, tagParsed, tagComponent
+					appendComps(resolveTagOutput(tag, local, resolvers, depth))
 				}
 			}
 		}
 	}
 	walk(nodes, inherited)
-	return runes, styles
+	return atoms
+}
+
+// textAtom is one position in a flattened gradient/rainbow/transition span:
+// either a single rune with its style, or (when the underlying content
+// can't be split into characters) one whole component, colored as a unit.
+type textAtom struct {
+	comp  c.Component
+	r     rune
+	style c.Style
 }
 
 func sameStyle(a, b c.Style) bool {
