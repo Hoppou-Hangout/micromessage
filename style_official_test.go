@@ -248,7 +248,7 @@ func TestOfficialShadow_HexWithAlpha(t *testing.T) {
 	// testParseHexComponentShadow: <shadow:#FF0000:0.8>i have a redder shadow
 	root := deserialize(t, `<shadow:#FF0000:0.8>i have a redder shadow`)
 	got := styleOfficialFlattenShadow(root)
-	wantARGB := uint32(0xCC)<<24 | 0xff<<16 | 0<<8 | 0
+	wantARGB := uint32(0xCC)<<24 | 0xff<<16
 	for i, l := range got {
 		if !l.isSet || l.argb != wantARGB {
 			t.Fatalf("char %d (%c): argb=%#x isSet=%v want %#x", i, l.ch, l.argb, l.isSet, wantARGB)
